@@ -279,18 +279,46 @@ CreateThread(function()
 end)
 
 
-RegisterCommand("testkick", function()
-    local ped = PlayerPedId()
-    local dict = "melee@unarmed@streamed_core"
-    local anim = "kick_close_a"
+-- RegisterCommand("testkick", function()
+--     local ped = PlayerPedId()
+--     local dict = "melee@unarmed@streamed_core"
+--     local anim = "kick_close_a"
 
-    RequestAnimDict(dict)
-    while not HasAnimDictLoaded(dict) do
-        Wait(10)
+--     RequestAnimDict(dict)
+--     while not HasAnimDictLoaded(dict) do
+--         Wait(10)
+--     end
+
+--     ClearPedTasksImmediately(ped)
+--     TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1750, 1, 0, false, false, false)
+
+--     print("^2[testanim]^7 Playing animation:", dict, anim)
+-- end)
+
+
+-- 💪 Always keep super peds in god mode
+CreateThread(function()
+    while true do
+        Wait(1000) -- check every second (adjust if needed)
+        local ped = PlayerPedId()
+        local model = GetEntityModel(ped)
+
+        -- Check if current ped is a SuperPed
+        for _, data in ipairs(Config.SuperPeds) do
+            if model == GetHashKey(data.model) then
+                -- Enable god mode for this ped
+                SetEntityInvincible(ped, true)
+                SetPedCanRagdoll(ped, false)
+                SetEntityProofs(ped, true, true, true, true, true, true, true, true)
+                SetPedSuffersCriticalHits(ped, false)
+                ClearPedBloodDamage(ped)
+                break
+            else
+                -- Disable god mode if not a super ped
+                SetEntityInvincible(ped, false)
+                SetPedCanRagdoll(ped, true)
+                SetEntityProofs(ped, false, false, false, false, false, false, false, false)
+            end
+        end
     end
-
-    ClearPedTasksImmediately(ped)
-    TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1750, 1, 0, false, false, false)
-
-    print("^2[testanim]^7 Playing animation:", dict, anim)
 end)
