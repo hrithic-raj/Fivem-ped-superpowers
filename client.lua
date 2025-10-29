@@ -1,3 +1,4 @@
+local currentPower = nil
 local activePower = nil
 local heldEntity = nil
 local cooldown = 1000
@@ -120,18 +121,175 @@ end
 
 
 -- 🌀 Teleport / Blink
-local function teleportPower()
-    local ped = PlayerPedId()
-    if IsPedInAnyVehicle(ped, false) then return end
+-- local function teleportPower()
+--     local ped = PlayerPedId()
+--     if IsPedInAnyVehicle(ped, false) then return end
 
-    local coords = GetEntityCoords(ped)
-    local forward = GetEntityForwardVector(ped)
-    local dest = coords + forward * Config.TeleportDistance
-    DoScreenFadeOut(200)
-    Wait(150)
-    SetEntityCoords(ped, dest.x, dest.y, dest.z, false, false, false, true)
-    DoScreenFadeIn(200)
+--     local coords = GetEntityCoords(ped)
+--     local forward = GetEntityForwardVector(ped)
+--     local dest = coords + forward * Config.TeleportDistance
+--     DoScreenFadeOut(200)
+--     Wait(150)
+--     SetEntityCoords(ped, dest.x, dest.y, dest.z, false, false, false, true)
+--     DoScreenFadeIn(200)
+-- end
+
+
+
+
+-- 🌀 Omen-Style Teleport
+local teleportActive = false
+local teleportMarker = nil
+local teleportCoords = nil
+
+-- Helper: Convert rotation to direction
+function RotationToDirection(rot)
+    local z = math.rad(rot.z)
+    local x = math.rad(rot.x)
+    local num = math.abs(math.cos(x))
+    return vector3(-math.sin(z) * num, math.cos(z) * num, math.sin(x))
 end
+
+-- Helper: Raycast from camera
+local function RayCastGamePlayCamera(distance)
+    local camRot = GetGameplayCamRot()
+    local camCoord = GetGameplayCamCoord()
+    local direction = RotationToDirection(camRot)
+    local dest = camCoord + (direction * distance)
+    local rayHandle = StartExpensiveSynchronousShapeTestLosProbe(
+        camCoord.x, camCoord.y, camCoord.z,
+        dest.x, dest.y, dest.z,
+        -1, PlayerPedId(), 0
+    )
+    local _, hit, endCoords = GetShapeTestResult(rayHandle)
+    return hit, endCoords
+end
+
+-- 🔴 Red marker with larger radius
+local function drawTeleportMarker(coords)
+    DrawMarker(
+        1, 
+        coords.x, coords.y, coords.z + 1.0, 
+        0.0, 0.0, 0.0, 
+        0.0, 0.0, 0.0, 
+        1.0, 1.0, 1.0,   -- Increased size
+        255, 0, 0, 200,  -- Red color
+        false, false, 2, nil, nil, false
+    )
+end
+
+-- 🌫️ Teleport animation (Omen-style)
+local function playTeleportFX(ped, coords)
+    -- Small fade and smoke effect
+    RequestNamedPtfxAsset("core")
+    while not HasNamedPtfxAssetLoaded("core") do
+        Wait(10)
+    end
+
+    UseParticleFxAssetNextCall("core")
+    StartParticleFxNonLoopedAtCoord(
+        "exp_grd_bzgas_smoke",
+        coords.x, coords.y, coords.z,
+        0.0, 0.0, 0.0,
+        2.0,  -- scale
+        false, false, false
+    )
+end
+
+-- 🌀 Omen Teleport
+local function omenTeleport()
+    local ped = PlayerPedId()
+
+    if not teleportActive then
+        teleportActive = true
+        CreateThread(function()
+            while teleportActive do
+                Wait(0)
+                local tpLimit = Config.TeleportLimit or 50.0
+                local hit, endCoords = RayCastGamePlayCamera(tpLimit)
+                if hit then
+                    teleportCoords = endCoords
+                    drawTeleportMarker(endCoords)
+                end
+
+                -- Cancel targeting (Backspace / ESC)
+                if IsControlJustPressed(0, 177) then
+                    teleportActive = false
+                    teleportCoords = nil
+                    break
+                end
+            end
+        end)
+        SetNotificationTextEntry("STRING")
+        AddTextComponentString("~b~Teleport targeting active. Press again to teleport.")
+        DrawNotification(false, false)
+
+    else
+        teleportActive = false
+
+        if teleportCoords then
+            local pedCoords = GetEntityCoords(ped)
+            local distance = #(teleportCoords - pedCoords)
+
+            -- Limit teleport range
+            if distance > (Config.TeleportLimit or 50.0) then
+                SetNotificationTextEntry("STRING")
+                AddTextComponentString("~r~Target too far! (Max " .. (Config.TeleportLimit or 50.0) .. "m)")
+                DrawNotification(false, false)
+                return
+            end
+
+            -- Detect safe ground
+            local foundGround, groundZ = GetGroundZFor_3dCoord(
+                teleportCoords.x, teleportCoords.y, teleportCoords.z + 5.0, 0
+            )
+            local safeZ
+
+            if foundGround then
+                safeZ = groundZ + 1.0
+            else
+                for z = teleportCoords.z + 50.0, 0.0, -2.0 do
+                    local hitGround, gZ = GetGroundZFor_3dCoord(
+                        teleportCoords.x, teleportCoords.y, z, 0
+                    )
+                    if hitGround then
+                        safeZ = gZ + 1.0
+                        break
+                    end
+                end
+            end
+
+            if not safeZ then
+                SetNotificationTextEntry("STRING")
+                AddTextComponentString("~r~No safe ground detected at target point!")
+                DrawNotification(false, false)
+                return
+            end
+
+            -- 🌫️ Disappear animation
+            playTeleportFX(ped, pedCoords)
+            DoScreenFadeOut(500)
+            Wait(600)
+
+            -- Teleport
+            SetEntityCoordsNoOffset(ped, teleportCoords.x, teleportCoords.y, safeZ, false, false, false)
+            SetEntityHeading(ped, GetGameplayCamRot(0).z)
+
+            -- 🌫️ Appear animation
+            playTeleportFX(ped, teleportCoords)
+            Wait(200)
+            DoScreenFadeIn(600)
+        else
+            SetNotificationTextEntry("STRING")
+            AddTextComponentString("~r~No valid target to teleport!")
+            DrawNotification(false, false)
+        end
+    end
+end
+
+-- RegisterCommand("omen", omenTeleport)
+-- RegisterKeyMapping("omen", "Omen Teleport", "keyboard", "E")
+
 
 -- telekinesis/ lift vehicles
 local telekinesisActive = false
@@ -251,27 +409,155 @@ end
 
 
 
+-- ⚡ Thor Lightning Power (Visible Bolts)
+function thorLightningPower()
+    local ped = PlayerPedId()
+    if IsPedInAnyVehicle(ped, false) then return end
+
+    -- ⚡ Animation (optional)
+    local dict = "friends@fra@ig_1"
+    local anim = "over_here_idle_a"
+    RequestAnimDict(dict)
+    while not HasAnimDictLoaded(dict) do Wait(0) end
+    TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1500, 0, 0, false, false, false)
+
+    local radius = Config.ThorRadius or 20.0
+    local force = Config.ThorForce or 60.0
+    local pCoords = GetEntityCoords(ped)
+
+    print("⚡ Thor power activated!")
+
+    -- Flash + rumble around player
+    ForceLightningFlash()
+    -- ShakeGameplayCam("LARGE_EXPLOSION_SHAKE", 0.8)
+    ShakeGameplayCam("SMALL_EXPLOSION_SHAKE", 0.2)
+    StartScreenEffect("LightningFlash", 0, false)
+    PlaySoundFromCoord(-1, "Thunder", pCoords.x, pCoords.y, pCoords.z, 0, 0, 0, 0)
+
+    -- Electric buildup at player
+    RequestNamedPtfxAsset("core")
+    while not HasNamedPtfxAssetLoaded("core") do Wait(10) end
+    UseParticleFxAssetNextCall("core")
+    StartParticleFxNonLoopedAtCoord("ent_amb_elec_crackle_sp",
+        pCoords.x, pCoords.y, pCoords.z + 1.0, 0.0, 0.0, 0.0,
+        2.5, false, false, false)
+
+    Wait(600)
+
+    -- 🔥 Strike vehicles
+    for _, vehicle in ipairs(GetGamePool('CVehicle')) do
+        local vCoords = GetEntityCoords(vehicle)
+        local dist = #(pCoords - vCoords)
+
+        if dist <= radius then
+            -- Sky strike start and end positions
+            local strikeStart = vector3(vCoords.x, vCoords.y, vCoords.z + 40.0)
+            local strikeEnd = vector3(vCoords.x, vCoords.y, vCoords.z + 1.0)
+
+            -- Draw the lightning bolt (line from sky to vehicle)
+            DrawLine(strikeStart.x, strikeStart.y, strikeStart.z,
+                     strikeEnd.x, strikeEnd.y, strikeEnd.z,
+                     0, 150, 255, 255) -- blue-white bolt
+
+            -- Sky flash and thunder
+            ForceLightningFlash()
+            PlaySoundFromCoord(-1, "Thunder", vCoords.x, vCoords.y, vCoords.z, 0, 0, 0, 0)
+
+            -- Ground electric impact
+            UseParticleFxAssetNextCall("core")
+            StartParticleFxNonLoopedAtCoord("ent_amb_elec_crackle_sp",
+                vCoords.x, vCoords.y, vCoords.z + 1.0, 0.0, 0.0, 0.0,
+                2.5, false, false, false)
+
+            -- Explosion for power impact
+            AddExplosion(vCoords.x, vCoords.y, vCoords.z + 1.0, 29, 1.5, true, false, 0.8)
+
+            -- Push vehicle
+            local dir = (vCoords - pCoords)
+            local norm = dir / #(dir)
+            ApplyForceToEntity(vehicle, 1, norm.x * force, norm.y * force, 30.0, 0.0, 0.0, 0.0, 0, false, true, true, false, true)
+
+            SetVehicleEngineHealth(vehicle, GetVehicleEngineHealth(vehicle) - 400.0)
+        end
+    end
+
+    -- ⚡ Strike nearby peds too
+    for _, entity in ipairs(GetGamePool('CPed')) do
+        if entity ~= ped then
+            local eCoords = GetEntityCoords(entity)
+            local dist = #(pCoords - eCoords)
+            if dist <= radius then
+                local strikeStart = vector3(eCoords.x, eCoords.y, eCoords.z + 35.0)
+                local strikeEnd = vector3(eCoords.x, eCoords.y, eCoords.z + 1.0)
+
+                -- Draw bolt
+                DrawLine(strikeStart.x, strikeStart.y, strikeStart.z,
+                         strikeEnd.x, strikeEnd.y, strikeEnd.z,
+                         255, 255, 255, 255)
+
+                -- Electric impact
+                UseParticleFxAssetNextCall("core")
+                StartParticleFxNonLoopedAtCoord("ent_amb_elec_crackle_sp",
+                    eCoords.x, eCoords.y, eCoords.z + 1.0, 0.0, 0.0, 0.0,
+                    2.0, false, false, false)
+
+                ForceLightningFlash()
+                AddExplosion(eCoords.x, eCoords.y, eCoords.z + 1.0, 29, 1.2, true, false, 0.5)
+                ApplyForceToEntity(entity, 1, 0.0, 0.0, 40.0, 0.0, 0.0, 0.0, 0, false, true, true, false, true)
+                SetEntityHealth(entity, GetEntityHealth(entity) - 60)
+            end
+        end
+    end
+end
+
+
+
+
+
 -- 🔥 Main Power Handler
+CreateThread(function()
+    local lastModel = nil
+    while true do
+        Wait(500)
+
+        local ped = PlayerPedId()
+        local model = GetEntityModel(ped)
+
+        -- Detect ped model change
+        if model ~= lastModel then
+            lastModel = model
+            currentPower = getPedPower()
+
+            if currentPower then
+                print("[SuperPower] Power activated for model:", model, "→", currentPower)
+            else
+                print("[SuperPower] No power assigned for this ped.")
+            end
+        end
+    end
+end)
+
+-- 🔑 Listen for keypress to activate power
 CreateThread(function()
     while true do
         Wait(0)
-        local ped = PlayerPedId()
-
         if IsControlJustPressed(0, Config.PowerKey) then
             if GetGameTimer() - lastUse < cooldown then goto continue end
             lastUse = GetGameTimer()
 
-            local power = getPedPower()
-            if not power then goto continue end
+            if not currentPower then goto continue end
 
-            if power == "superkick" then
+            if currentPower == "superkick" then
                 superKickPower()
-            elseif power == "shockwave" then
+            elseif currentPower == "shockwave" then
                 shockwavePower()
-            elseif power == "telekinesis" then
+            elseif currentPower == "telekinesis" then
                 telekinesisPower()
-            elseif power == "teleport" then
-                teleportPower()
+            elseif currentPower == "thor" then
+                print("Triggering Thor Power!")
+                thorLightningPower()
+            elseif currentPower == "teleport" then
+                omenTeleport()
             end
         end
         ::continue::
@@ -279,21 +565,35 @@ CreateThread(function()
 end)
 
 
--- RegisterCommand("testkick", function()
---     local ped = PlayerPedId()
---     local dict = "melee@unarmed@streamed_core"
---     local anim = "kick_close_a"
+-- 🔥 Main Power Handler
+-- CreateThread(function()
+--     while true do
+--         Wait(0)
+--         local ped = PlayerPedId()
 
---     RequestAnimDict(dict)
---     while not HasAnimDictLoaded(dict) do
---         Wait(10)
+--         if IsControlJustPressed(0, Config.PowerKey) then
+--             if GetGameTimer() - lastUse < cooldown then goto continue end
+--             lastUse = GetGameTimer()
+
+--             local power = getPedPower()
+--             if not power then goto continue end
+
+--             if power == "superkick" then
+--                 superKickPower()
+--             elseif power == "shockwave" then
+--                 shockwavePower()
+--             elseif power == "telekinesis" then
+--                 telekinesisPower()
+--             elseif power == "thor" then
+--                 thorLightningPower()
+--             elseif power == "teleport" then
+--                 omenTeleport()
+--             end
+--         end
+--         ::continue::
 --     end
-
---     ClearPedTasksImmediately(ped)
---     TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1750, 1, 0, false, false, false)
-
---     print("^2[testanim]^7 Playing animation:", dict, anim)
 -- end)
+
 
 
 -- 💪 Always keep super peds in god mode
