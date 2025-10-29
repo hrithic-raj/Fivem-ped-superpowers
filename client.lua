@@ -705,43 +705,6 @@ CreateThread(function()
     end
 end)
 
-
-
--- 🌀 Recall existing clones to player and update radius
--- 🌀 Recall existing clones to player and update radius
-function RepositionClones()
-    local ped = PlayerPedId()
-    local playerCoords = GetEntityCoords(ped)
-    print("[SuperPower] Repositioning clones...")
-
-    for _, clone in pairs(clones) do
-        if DoesEntityExist(clone) then
-            ClearPedTasksImmediately(clone)
-            TaskGoToEntity(clone, ped, -1, 2.0, 8.0, 1073741824, 0)
-        end
-    end
-
-    -- give them 2 seconds to reach you, then re-engage nearby targets
-    SetTimeout(2000, function()
-        for _, clone in pairs(clones) do
-            if DoesEntityExist(clone) then
-                local nearbyPeds = GetNearbyTargets(clone)
-                if #nearbyPeds > 0 then
-                    local target = nearbyPeds[math.random(#nearbyPeds)]
-                    TaskCombatPed(clone, target, 0, 16)
-                else
-                    TaskWanderStandard(clone, 10.0, 10)
-                end
-            end
-        end
-    end)
-end
-
-
-
-
-
-
 -- 🔥 Main Power Handler
 CreateThread(function()
     local lastModel = nil
@@ -788,7 +751,7 @@ CreateThread(function()
                 if not clonesActive then
                     CreateClones()
                 else
-                    RepositionClones()
+                    print("Clones already out")
                 end
             elseif currentPower == "teleport" then
                 omenTeleport()
@@ -797,37 +760,6 @@ CreateThread(function()
         ::continue::
     end
 end)
-
-
--- 🔥 Main Power Handler
--- CreateThread(function()
---     while true do
---         Wait(0)
---         local ped = PlayerPedId()
-
---         if IsControlJustPressed(0, Config.PowerKey) then
---             if GetGameTimer() - lastUse < cooldown then goto continue end
---             lastUse = GetGameTimer()
-
---             local power = getPedPower()
---             if not power then goto continue end
-
---             if power == "superkick" then
---                 superKickPower()
---             elseif power == "shockwave" then
---                 shockwavePower()
---             elseif power == "telekinesis" then
---                 telekinesisPower()
---             elseif power == "thor" then
---                 thorLightningPower()
---             elseif power == "teleport" then
---                 omenTeleport()
---             end
---         end
---         ::continue::
---     end
--- end)
-
 
 
 -- 💪 Always keep super peds in god mode
