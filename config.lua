@@ -10,6 +10,7 @@ Config.SuperPeds = {
     { model = "veggiebaobros", power = "teleport" },
     { model = "daedricarmor", power = "superkick" },
     { model = "LikulaoGyee", power = "thor" },
+    { model = "hollowhead", power = "clone" },
 }
 
 -- 💥 Power tuning
@@ -27,3 +28,11 @@ Config.DropForce = -20.0
 
 Config.ThorRadius = 60.0
 Config.ThorForce = 60.0
+
+Config.CloneCount = 4
+Config.DetectRadius = 60.0
+Config.CloneDurationFlag = false 
+Config.CloneDuration = 30.0
+Config.CloneKey = 38 -- E
+Config.DismissKey = 177 -- Backspace
+Config.CloneWeapon = "WEAPON_CARBINERIFLE"

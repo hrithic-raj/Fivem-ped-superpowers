@@ -460,9 +460,9 @@ function thorLightningPower()
                      0, 150, 255, 255) -- blue-white bolt
 
             -- Sky flash and thunder
+            StartScreenEffect("LightningFlash", 0, false)
             ForceLightningFlash()
             PlaySoundFromCoord(-1, "Thunder", vCoords.x, vCoords.y, vCoords.z, 0, 0, 0, 0)
-
             -- Ground electric impact
             UseParticleFxAssetNextCall("core")
             StartParticleFxNonLoopedAtCoord("ent_amb_elec_crackle_sp",
@@ -489,7 +489,8 @@ function thorLightningPower()
             if dist <= radius then
                 local strikeStart = vector3(eCoords.x, eCoords.y, eCoords.z + 35.0)
                 local strikeEnd = vector3(eCoords.x, eCoords.y, eCoords.z + 1.0)
-
+                StartScreenEffect("LightningFlash", 0, false)
+                ForceLightningFlash()
                 -- Draw bolt
                 DrawLine(strikeStart.x, strikeStart.y, strikeStart.z,
                          strikeEnd.x, strikeEnd.y, strikeEnd.z,
@@ -509,6 +510,233 @@ function thorLightningPower()
         end
     end
 end
+
+
+
+-- clone power
+
+local clonePeds = {}
+local clonesActive = false
+
+------------------------------------------------
+-- ⚙️ Relationship setup
+------------------------------------------------
+local RELATIONSHIP_CLONES = `CLONES`
+AddRelationshipGroup("CLONES")
+
+SetRelationshipBetweenGroups(0, RELATIONSHIP_CLONES, `PLAYER`)
+SetRelationshipBetweenGroups(0, `PLAYER`, RELATIONSHIP_CLONES)
+SetRelationshipBetweenGroups(1, RELATIONSHIP_CLONES, RELATIONSHIP_CLONES)
+SetRelationshipBetweenGroups(5, RELATIONSHIP_CLONES, `CIVMALE`)
+SetRelationshipBetweenGroups(5, RELATIONSHIP_CLONES, `CIVFEMALE`)
+SetRelationshipBetweenGroups(5, RELATIONSHIP_CLONES, `COP`)
+SetRelationshipBetweenGroups(5, RELATIONSHIP_CLONES, `SECURITY_GUARD`)
+
+------------------------------------------------
+-- 🔍 Find nearby NPCs and players
+------------------------------------------------
+local function GetNearbyTargets(playerPed, radius)
+    local targets = {}
+    local playerCoords = GetEntityCoords(playerPed)
+    local playerId = PlayerId()
+
+    for _, ped in ipairs(GetGamePool('CPed')) do
+        if DoesEntityExist(ped)
+        and ped ~= playerPed
+        and not IsPedAPlayer(ped)
+        and not IsPedDeadOrDying(ped, true)
+        and GetPedRelationshipGroupHash(ped) ~= RELATIONSHIP_CLONES then
+            local dist = #(GetEntityCoords(ped) - playerCoords)
+            if dist <= radius then
+                table.insert(targets, ped)
+            end
+        end
+    end
+
+    for _, player in ipairs(GetActivePlayers()) do
+        if player ~= playerId then
+            local targetPed = GetPlayerPed(player)
+            if DoesEntityExist(targetPed) and not IsPedDeadOrDying(targetPed, true) then
+                local dist = #(GetEntityCoords(targetPed) - playerCoords)
+                if dist <= radius then
+                    table.insert(targets, targetPed)
+                end
+            end
+        end
+    end
+
+    return targets
+end
+
+------------------------------------------------
+-- 🧹 Dismiss all clones
+------------------------------------------------
+local function ClearClones()
+    for _, ped in ipairs(clonePeds) do
+        if DoesEntityExist(ped) then
+            DeleteEntity(ped)
+        end
+    end
+    clonePeds = {}
+    clonesActive = false
+    print("[SuperPower] Clones dismissed.")
+end
+
+------------------------------------------------
+-- 🧬 Create Clones (with proper weapon setup)
+------------------------------------------------
+local function CreateClones()
+    local playerPed = PlayerPedId()
+    local playerCoords = GetEntityCoords(playerPed)
+    local model = GetEntityModel(playerPed)
+
+    clonesActive = true
+    RequestModel(model)
+    while not HasModelLoaded(model) do Wait(0) end
+
+    local weaponHash = GetHashKey(Config.CloneWeapon or "WEAPON_CARBINERIFLE")
+    local ammoCount = Config.CloneAmmo or 9999
+    local infiniteClip = Config.CloneInfiniteAmmo == true
+
+    -- spawn clones
+    for i = 1, Config.CloneCount do
+        local offset = vector3(math.random(-3,3), math.random(-3,3), 0.0)
+        local spawnPos = playerCoords + offset
+
+        local clone = CreatePed(4, model, spawnPos.x, spawnPos.y, spawnPos.z, GetEntityHeading(playerPed), true, true)
+        SetEntityAsMissionEntity(clone, true, true)
+        SetPedRelationshipGroupHash(clone, RELATIONSHIP_CLONES)
+        SetBlockingOfNonTemporaryEvents(clone, true)
+        SetPedCanRagdoll(clone, false)
+        SetPedFleeAttributes(clone, 0, false)
+        SetPedCombatAttributes(clone, 46, true)
+        SetPedCombatRange(clone, 2)
+        SetPedCombatAbility(clone, 2)
+        SetPedCombatMovement(clone, 3)
+        SetPedAccuracy(clone, 95)
+        SetPedArmour(clone, 200)
+        SetEntityHealth(clone, 300)
+        SetPedSeeingRange(clone, 150.0)
+        SetPedHearingRange(clone, 150.0)
+        SetPedAlertness(clone, 3)
+        SetPedMoveRateOverride(clone, 1.35)
+
+        -- give weapon, equip, ensure ammo & clip
+        GiveWeaponToPed(clone, weaponHash, ammoCount, false, true) -- give weapon and some ammo
+        SetCurrentPedWeapon(clone, weaponHash, true)
+        SetPedInfiniteAmmoClip(clone, true)    -- keep clip full
+        SetPedInfiniteAmmo(clone, true, weaponHash) -- keep ammo (redundant but safe)
+
+        -- ensure they will shoot instantly
+        SetPedKeepTask(clone, true)
+        SetPedShootRate(clone, 1000) -- shooting frequency (higher = more bullets)
+        SetPedShootRate = SetPedShootRate or SetPedShootRate -- prevent nil if unavailable
+
+        TaskFollowToOffsetOfEntity(clone, playerPed, math.random(-2,2), math.random(-2,2), 0.0, 3.0, -1, 2.0, true)
+        table.insert(clonePeds, clone)
+    end
+
+    print("[SuperPower] Clones created:", #clonePeds)
+
+    -- Aggressive shooting loop: every tick assign targets and force aim+shoot
+    CreateThread(function()
+        local startTime = GetGameTimer()
+        while clonesActive do
+            local targets = GetNearbyTargets(playerPed, Config.DetectRadius)
+
+            -- if there are targets, give each clone a primary target to shoot at
+            if #targets > 0 then
+                for _, clone in ipairs(clonePeds) do
+                    if DoesEntityExist(clone) and not IsPedDeadOrDying(clone, true) then
+                        -- pick the closest target to the clone for better distribution
+                        local bestTarget = nil
+                        local bestDist = 99999
+                        for _, t in ipairs(targets) do
+                            if DoesEntityExist(t) and not IsPedDeadOrDying(t, true) then
+                                local d = #(GetEntityCoords(t) - GetEntityCoords(clone))
+                                if d < bestDist then
+                                    bestDist = d
+                                    bestTarget = t
+                                end
+                            end
+                        end
+
+                        if bestTarget and DoesEntityExist(bestTarget) then
+                            -- clear tasks then force aim + shoot
+                            ClearPedTasks(clone)
+                            -- aim at entity (keep aiming for a short duration)
+                            TaskAimGunAtEntity(clone, bestTarget, 4000, true)
+                            Wait(50) -- tiny wait to let them aim
+                            -- shoot at entity for a duration
+                            TaskShootAtEntity(clone, bestTarget, 4000, GetPedRelationshipGroupHash(bestTarget) == RELATIONSHIP_CLONES and 0 or 0)
+                            SetPedKeepTask(clone, true)
+                        end
+                    end
+                end
+            else
+                -- no targets: have them stay close and ready
+                for _, clone in ipairs(clonePeds) do
+                    if DoesEntityExist(clone) and not IsPedDeadOrDying(clone, true) then
+                        TaskFollowToOffsetOfEntity(clone, playerPed, math.random(-2,2), math.random(-2,2), 0.0, 3.0, -1, 2.0, true)
+                    end
+                end
+            end
+
+            -- auto-dismiss after duration
+          if Config.CloneDurationFlag and GetGameTimer() - startTime > (Config.CloneDuration * 1000) then
+                ClearClones()
+                break
+          end
+
+            Wait(700) -- how often they retarget / re-fire (adjust down for more aggressive)
+        end
+    end)
+end
+
+-- Clear clones
+CreateThread(function()
+    while true do
+        Wait(0)
+        if IsControlJustPressed(0, Config.DismissKey) then
+            if clonesActive then
+                ClearClones()
+            end
+        end
+    end
+end)
+
+
+
+-- 🌀 Recall existing clones to player and update radius
+-- 🌀 Recall existing clones to player and update radius
+function RepositionClones()
+    local ped = PlayerPedId()
+    local playerCoords = GetEntityCoords(ped)
+    print("[SuperPower] Repositioning clones...")
+
+    for _, clone in pairs(clones) do
+        if DoesEntityExist(clone) then
+            ClearPedTasksImmediately(clone)
+            TaskGoToEntity(clone, ped, -1, 2.0, 8.0, 1073741824, 0)
+        end
+    end
+
+    -- give them 2 seconds to reach you, then re-engage nearby targets
+    SetTimeout(2000, function()
+        for _, clone in pairs(clones) do
+            if DoesEntityExist(clone) then
+                local nearbyPeds = GetNearbyTargets(clone)
+                if #nearbyPeds > 0 then
+                    local target = nearbyPeds[math.random(#nearbyPeds)]
+                    TaskCombatPed(clone, target, 0, 16)
+                else
+                    TaskWanderStandard(clone, 10.0, 10)
+                end
+            end
+        end
+    end)
+end
+
 
 
 
@@ -556,6 +784,12 @@ CreateThread(function()
             elseif currentPower == "thor" then
                 print("Triggering Thor Power!")
                 thorLightningPower()
+            elseif currentPower == "clone" then
+                if not clonesActive then
+                    CreateClones()
+                else
+                    RepositionClones()
+                end
             elseif currentPower == "teleport" then
                 omenTeleport()
             end
