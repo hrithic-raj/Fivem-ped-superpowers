@@ -16,18 +16,75 @@ local function getPedPower()
 end
 
 -- 🦵 Improved Super Kick (with animation)
+-- local function superKickPower()
+--     local ped = PlayerPedId()
+--     if IsPedInAnyVehicle(ped, false) then return end -- disable while driving
+
+--     -- local radius = 3.0
+--     local pCoords = GetEntityCoords(ped)
+--     local entities = {}
+
+--     for _, v in ipairs(GetGamePool('CVehicle')) do table.insert(entities, v) end
+--     for _, np in ipairs(GetGamePool('CPed')) do if np ~= ped then table.insert(entities, np) end end
+
+--     local target, minDist = nil, Config.kickRadius
+--     for _, e in ipairs(entities) do
+--         local eCoords = GetEntityCoords(e)
+--         local dist = #(pCoords - eCoords)
+--         if dist < minDist then
+--             target = e
+--             minDist = dist
+--         end
+--     end
+
+--     if target then
+--         -- ✅ Use known working anim
+--         local dict = "melee@unarmed@streamed_core"
+--         local anim = "kick_close_a"
+
+--         RequestAnimDict(dict)
+--         while not HasAnimDictLoaded(dict) do Wait(0) end
+
+--         -- 👊 Play full-body kick animation
+--         ClearPedTasksImmediately(ped)
+--         TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1750, 0, 0, false, false, false)
+
+--         -- Wait until the kick visually lands (~350–450ms timing window)
+--         Wait(400)
+
+--         -- 💥 Apply powerful kick force
+--         local targetCoords = GetEntityCoords(target)
+--         local dir = targetCoords - pCoords
+--         local norm = dir / #(dir)
+
+--         ApplyForceToEntity(
+--             target,
+--             1,
+--             norm.x * Config.KickForce,
+--             norm.y * Config.KickForce,
+--             norm.z * (Config.KickForce / 3),
+--             0.0, 0.0, 0.0,
+--             0, false, true, true, false, true
+--         )
+--     else
+--         SetNotificationTextEntry("STRING")
+--         AddTextComponentString("~r~No target nearby to kick!")
+--         DrawNotification(false, false)
+--     end
+-- end
+
+-- ⚡ Improved Super Kick (Hero Style)
 local function superKickPower()
     local ped = PlayerPedId()
     if IsPedInAnyVehicle(ped, false) then return end -- disable while driving
 
-    -- local radius = 3.0
     local pCoords = GetEntityCoords(ped)
     local entities = {}
 
     for _, v in ipairs(GetGamePool('CVehicle')) do table.insert(entities, v) end
     for _, np in ipairs(GetGamePool('CPed')) do if np ~= ped then table.insert(entities, np) end end
 
-    local target, minDist = nil, Config.kickRadius
+    local target, minDist = nil, Config.kickRadius or 3.0
     for _, e in ipairs(entities) do
         local eCoords = GetEntityCoords(e)
         local dist = #(pCoords - eCoords)
@@ -38,25 +95,29 @@ local function superKickPower()
     end
 
     if target then
-        -- ✅ Use known working anim
+        -- 🧭 Face the ped toward the target
+        local targetCoords = GetEntityCoords(target)
+        local dir = targetCoords - pCoords
+        local heading = GetHeadingFromVector_2d(dir.x, dir.y)
+        SetEntityHeading(ped, heading)
+
+        -- 🎬 Play strong kick animation
         local dict = "melee@unarmed@streamed_core"
         local anim = "kick_close_a"
 
         RequestAnimDict(dict)
         while not HasAnimDictLoaded(dict) do Wait(0) end
 
-        -- 👊 Play full-body kick animation
+        -- Freeze ped slightly to prevent sliding or falling back
         ClearPedTasksImmediately(ped)
-        TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 1750, 0, 0, false, false, false)
+        FreezeEntityPosition(ped, true)
+        TaskPlayAnim(ped, dict, anim, 8.0, -8.0, 800, 0, 0, false, false, false)
 
-        -- Wait until the kick visually lands (~350–450ms timing window)
+        -- ⏱️ Wait until animation impact moment (~400ms)
         Wait(400)
 
-        -- 💥 Apply powerful kick force
-        local targetCoords = GetEntityCoords(target)
-        local dir = targetCoords - pCoords
+        -- 💥 Apply powerful kick force on target
         local norm = dir / #(dir)
-
         ApplyForceToEntity(
             target,
             1,
@@ -66,6 +127,13 @@ local function superKickPower()
             0.0, 0.0, 0.0,
             0, false, true, true, false, true
         )
+
+        -- 🦶 Small screen shake or camera punch for effect
+        ShakeGameplayCam("SMALL_EXPLOSION_SHAKE", 0.15)
+
+        -- 🧊 Unfreeze ped after short delay
+        Wait(500)
+        FreezeEntityPosition(ped, false)
     else
         SetNotificationTextEntry("STRING")
         AddTextComponentString("~r~No target nearby to kick!")
@@ -74,8 +142,6 @@ local function superKickPower()
 end
 
 
-
--- ⚡ Shockwave / Energy Punch
 -- ⚡ Shockwave / Energy Punch
 local function shockwavePower()
     local ped = PlayerPedId()
